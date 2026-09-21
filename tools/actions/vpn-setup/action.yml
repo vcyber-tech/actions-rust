@@ -102,7 +102,7 @@ runs:
         if [[ "$VERSION" =~ ^([a-z0-9-]+)/v([0-9]+)$ ]]; then
           ACTION="${BASH_REMATCH[1]}"
           MAJOR="${BASH_REMATCH[2]}"
-          RESOLVED=$(gh release list --repo "$REPO" --limit 100 --json tagName --jq "[.[] | select(.tagName | startswith(\"${ACTION}/${MAJOR}.\"))] | .[0].tagName // \"\"")
+          RESOLVED=$(gh release list --repo "$REPO" --limit 100 --json tagName --jq "[.[] | select(.tagName | startswith(\"${ACTION}/v${MAJOR}.\"))] | .[0].tagName // \"\"")
           if [ -z "$RESOLVED" ]; then
             echo "::error::nenhuma release encontrada para ${ACTION}/v${MAJOR}.*"
             exit 1
