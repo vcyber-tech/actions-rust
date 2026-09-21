@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
-use toolcore::{emite_anotacao, mascara_env_logs};
+use toolcore::{emite_anotacao, escreve_output, mascara_env_logs};
 
 #[derive(Parser)]
 #[command(
@@ -100,7 +100,7 @@ fn executa() -> Result<()> {
     }
 }
 
-// ---------------- Subcomadno: conectar ----------------
+// ---------------- Subcomando: conectar ----------------
 
 fn conectar(args: ArgsConectar) -> Result<()> {
     let workdir = diretorio_trabalho()?;
@@ -137,6 +137,11 @@ fn conectar_com(args: ArgsConectar, ambiente: &dyn Ambiente, workdir: &Path) -> 
     let interface = descobre_interface(ambiente, &args, timeout)?;
     let ip = descobre_ip(ambiente, &interface, timeout)?;
     println!("túnel ativo em {interface} ({ip})");
+
+    // Publica nos outputs do GitHub Actions ($GITHUB_OUTPUT). Fora do
+    // runner, a função cai no stdout em formato `key=value`.
+    escreve_output("interface", &interface)?;
+    escreve_output("tunnel-ip", &ip)?;
 
     if let Some(host) = &args.healthcheck_host {
         verifica_healthcheck(ambiente, host, args.healthcheck_port, timeout)?;
@@ -840,9 +845,15 @@ mod fake {
 mod tests_e2e {
     use super::fake::AmbienteFake;
     use super::*;
+    use std::sync::Mutex;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    // Serializa testes que leem/escrevem variáveis de ambiente, em
+    // especial GITHUB_OUTPUT. `std::env::set_var` é `unsafe` desde
+    // Rust 1.86 (edição 2024) porque mutação de env não é thread-safe.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn cria_workdir() -> PathBuf {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
@@ -876,6 +887,7 @@ mod tests_e2e {
 
     #[test]
     fn sucesso_completo_com_healthcheck() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let fake = AmbienteFake::novo();
         fake.adiciona_interface("tun0");
         fake.adiciona_ip("tun0", "10.8.0.2");
@@ -892,6 +904,7 @@ mod tests_e2e {
 
     #[test]
     fn sucesso_sem_healthcheck_emite_warning() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let fake = AmbienteFake::novo();
         fake.adiciona_interface("tun0");
         fake.adiciona_ip("tun0", "10.8.0.2");
@@ -948,6 +961,7 @@ mod tests_e2e {
 
     #[test]
     fn falha_do_healthcheck_apos_tunel_ok() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let fake = AmbienteFake::novo();
         fake.adiciona_interface("tun0");
         fake.adiciona_ip("tun0", "10.8.0.2");
@@ -980,6 +994,7 @@ mod tests_e2e {
 
     #[test]
     fn interface_explicita_e_respeitada() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let fake = AmbienteFake::novo();
         fake.adiciona_interface("outra0");
         fake.adiciona_interface("tun5");
@@ -998,6 +1013,7 @@ mod tests_e2e {
 
     #[test]
     fn auth_file_nao_eh_criado_com_credenciais_vazias() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // Regressão: GitHub Actions passa `''` quando o input não é
         // preenchido. Sem essa proteção, criávamos auth.txt com "\n\n".
         let fake = AmbienteFake::novo();
@@ -1031,6 +1047,70 @@ mod tests_e2e {
         assert!(resultado.is_err());
         let msg = format!("{:#}", resultado.unwrap_err());
         assert!(msg.contains("--password"), "{msg}");
+    }
+
+    #[test]
+    fn conectar_com_publica_outputs_em_github_output() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let outdir = cria_workdir();
+        let gh_output = outdir.join("github_output.txt");
+        std::fs::write(&gh_output, "").unwrap();
+
+        // SAFETY: mutação de env protegida por ENV_LOCK. Nenhum outro
+        // teste desta suíte lê/escreve GITHUB_OUTPUT fora do lock.
+        unsafe { std::env::set_var("GITHUB_OUTPUT", &gh_output) };
+
+        let fake = AmbienteFake::novo();
+        fake.adiciona_interface("tun0");
+        fake.adiciona_ip("tun0", "10.8.0.2");
+        let args = args_padrao(cria_config());
+
+        let resultado = conectar_com(args, &fake, &cria_workdir());
+
+        unsafe { std::env::remove_var("GITHUB_OUTPUT") };
+
+        assert!(resultado.is_ok(), "{resultado:?}");
+
+        let conteudo = std::fs::read_to_string(&gh_output).unwrap();
+        assert!(
+            conteudo.contains("interface=tun0"),
+            "output 'interface' não publicado; conteúdo foi:\n{conteudo}"
+        );
+        assert!(
+            conteudo.contains("tunnel-ip=10.8.0.2"),
+            "output 'tunnel-ip' não publicado; conteúdo foi:\n{conteudo}"
+        );
+    }
+
+    #[test]
+    fn conectar_com_em_falha_nao_publica_outputs() {
+        let _guard = ENV_LOCK.lock().unwrap();
+
+        let outdir = cria_workdir();
+        let gh_output = outdir.join("github_output.txt");
+        std::fs::write(&gh_output, "").unwrap();
+
+        unsafe { std::env::set_var("GITHUB_OUTPUT", &gh_output) };
+
+        // Fake sem interfaces: descobre_interface esgota o timeout.
+        let fake = AmbienteFake::novo();
+        let mut args = args_padrao(cria_config());
+        args.timeout_secs = 1;
+
+        let resultado = conectar_com(args, &fake, &cria_workdir());
+
+        unsafe { std::env::remove_var("GITHUB_OUTPUT") };
+
+        assert!(
+            resultado.is_err(),
+            "esperava falha por timeout de interface"
+        );
+        let conteudo = std::fs::read_to_string(&gh_output).unwrap();
+        assert!(
+            !conteudo.contains("interface="),
+            "outputs não deveriam ter sido publicados em falha; conteúdo foi:\n{conteudo}"
+        );
     }
 
     #[test]
