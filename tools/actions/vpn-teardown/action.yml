@@ -67,7 +67,7 @@ runs:
 
     # ----------- 3. Baixar vpnctl (reaproveita cache do vpn-setup) -----------
     - name: Baixar vpnctl
-      if: steps.target.outputs.skip != 'true'
+      if: steps.target.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -110,7 +110,7 @@ runs:
 
     # ----------- 4. Desconectar (best-effort - nunca falha o job) -----------
     - name: Desconectar VPN
-      if: steps.target.outputs.skip != 'true'
+      if: steps.target.outputs.skip != 'true' && steps.version.outputs.skip != 'true'
       shell: bash
       env:
         # Se a VPN não subiu, ou se estamos em runner efêmera, isto é

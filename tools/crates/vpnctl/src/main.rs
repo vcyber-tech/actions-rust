@@ -555,8 +555,12 @@ fn valida_precondicoes(args: &ArgsConectar) -> Result<()> {
             args.config.display()
         );
     }
-    // Senha só faz sentido com usuário, e vice-versa.
-    match (&args.username, &args.password) {
+    // Senha só faz sentido com usuário, e vice-versa. Tratamos string
+    // vazia como ausente — é o que o GitHub Actions passa quando o input
+    // não foi preenchido.
+    let usuario = args.username.as_deref().filter(|s| !s.is_empty());
+    let senha = args.password.as_deref().filter(|s| !s.is_empty());
+    match (usuario, senha) {
         (Some(_), None) => bail!("--username foi informado mas --password está ausente"),
         (None, Some(_)) => bail!("--password foi informado mas --username está ausente"),
         _ => {}
@@ -590,7 +594,12 @@ fn escreve_config_segura(args: &ArgsConectar, workdir: &Path) -> Result<PathBuf>
 /// Prepara o arquivo de autenticação (`usuário\nsenha\n`) se ambos foram
 /// informados. Retorna `None` quando o provedor usa apenas certificado.
 fn prepara_auth_file(args: &ArgsConectar, workdir: &Path) -> Result<Option<PathBuf>> {
-    let (Some(usuario), Some(senha)) = (&args.username, &args.password) else {
+    // String vazia conta como ausente — o GitHub Actions passa `''`
+    // quando o input não é preenchido.
+    let Some(usuario) = args.username.as_deref().filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let Some(senha) = args.password.as_deref().filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
 
@@ -986,6 +995,43 @@ mod tests_e2e {
     }
 
     // --- desconectar ---
+
+    #[test]
+    fn auth_file_nao_eh_criado_com_credenciais_vazias() {
+        // Regressão: GitHub Actions passa `''` quando o input não é
+        // preenchido. Sem essa proteção, criávamos auth.txt com "\n\n".
+        let fake = AmbienteFake::novo();
+        fake.adiciona_interface("tun0");
+        fake.adiciona_ip("tun0", "10.8.0.2");
+        let workdir = cria_workdir();
+
+        let mut args = args_padrao(cria_config());
+        args.username = Some(String::new());
+        args.password = Some(String::new());
+
+        let resultado = conectar_com(args, &fake, &workdir);
+        assert!(resultado.is_ok(), "{resultado:?}");
+        assert!(
+            !workdir.join("auth.txt").exists(),
+            "auth.txt não deve existir quando credenciais são vazias"
+        );
+    }
+
+    #[test]
+    fn usuario_vazio_com_senha_preenchida_eh_rejeitado() {
+        // Cobertura do valida_precondicoes com o filtro de vazio.
+        let fake = AmbienteFake::novo();
+        let workdir = cria_workdir();
+
+        let mut args = args_padrao(cria_config());
+        args.username = Some(String::new());
+        args.password = Some("senha-real".into());
+
+        let resultado = conectar_com(args, &fake, &workdir);
+        assert!(resultado.is_err());
+        let msg = format!("{:#}", resultado.unwrap_err());
+        assert!(msg.contains("--password"), "{msg}");
+    }
 
     #[test]
     fn desconectar_sem_pid_file_eh_idempotente() {
