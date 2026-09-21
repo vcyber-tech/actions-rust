@@ -1,0 +1,171 @@
+name: Release
+
+on:
+  push:
+    tags:
+      # Dispara em tags tipo "vpn-setup/v1.0.0" ou "vpn-teardown/v1.2.3".
+      - '*/v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  detect:
+    name: Detectar action e binário
+    runs-on: ubuntu-latest
+    outputs:
+      action: ${{ steps.parse.outputs.action }}
+      version: ${{ steps.parse.outputs.version }}
+      binary: ${{ steps.parse.outputs.binary }}
+    steps:
+      - name: Parse da tag
+        id: parse
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+
+          if ! [[ "$TAG" =~ ^([a-z0-9-]+)/v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "::error::tag '$TAG' fora do padrão <action>/v<semver>"
+            exit 1
+          fi
+
+          ACTION="${BASH_REMATCH[1]}"
+          VERSION="v${BASH_REMATCH[2]}"
+
+          case "$ACTION" in
+            vpn-setup|vpn-teardown)  BINARY="vpnctl" ;;
+            *)
+              echo "::error::action desconhecida: $ACTION"
+              exit 1
+              ;;
+          esac
+
+          echo "action=$ACTION"   >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "binary=$BINARY"   >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: detect
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Instalar toolchain Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache do cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: tools
+
+      - name: Instalar musl-tools
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq musl-tools
+
+      - name: Compilar
+        working-directory: tools
+        run: |
+          cargo build \
+            --release \
+            --target ${{ matrix.target }} \
+            --package ${{ needs.detect.outputs.binary }}
+
+      - name: Empacotar com checksum
+        id: package
+        run: |
+          set -euo pipefail
+          BIN="${{ needs.detect.outputs.binary }}"
+          TARGET="${{ matrix.target }}"
+          SRC="tools/target/${TARGET}/release/${BIN}"
+
+          if [ ! -x "$SRC" ]; then
+            echo "::error::binário esperado em $SRC não existe"
+            exit 1
+          fi
+
+          if ! file "$SRC" | grep -q 'static'; then
+            echo "::error::$SRC não é estaticamente linkado"
+            file "$SRC"
+            exit 1
+          fi
+
+          mkdir -p dist
+          ASSET="${BIN}-${TARGET}.tar.gz"
+          cp "$SRC" dist/"${BIN}"
+          ( cd dist && tar czf "$ASSET" "${BIN}" && rm "${BIN}" )
+          ( cd dist && sha256sum "$ASSET" > "${ASSET}.sha256" )
+
+          echo "asset=$ASSET" >> "$GITHUB_OUTPUT"
+
+      - name: Upload de artefato temporário
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            dist/${{ steps.package.outputs.asset }}
+            dist/${{ steps.package.outputs.asset }}.sha256
+          retention-days: 1
+
+  publish:
+    name: Publicar release
+    needs: [detect, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Baixar artefatos
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Listar arquivos para conferência
+        run: ls -la dist/
+
+      - name: Criar release e anexar binários
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ needs.detect.outputs.action }} ${{ needs.detect.outputs.version }}
+          body: |
+            Release de `${{ needs.detect.outputs.action }}` versão `${{ needs.detect.outputs.version }}`.
+
+            Binários incluídos:
+            - `${{ needs.detect.outputs.binary }}-x86_64-unknown-linux-musl.tar.gz`
+
+            Cada arquivo `.tar.gz` vem acompanhado de seu `.sha256` para verificação de integridade.
+          files: dist/*
+          fail_on_unmatched_files: true
+
+  float-tag:
+    name: Atualizar tag flutuante
+    needs: [detect, publish]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Mover tag flutuante <action>/v<major>
+        env:
+          ACTION: ${{ needs.detect.outputs.action }}
+          VERSION: ${{ needs.detect.outputs.version }}
+        run: |
+          set -euo pipefail
+          MAJOR="${VERSION%%.*}"
+          FLOATING="${ACTION}/${MAJOR}"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git tag -f "$FLOATING" "${{ github.sha }}"
+          git push origin "$FLOATING" --force
+
+          echo "::notice::tag flutuante '$FLOATING' agora aponta para ${VERSION}"
