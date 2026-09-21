@@ -1,0 +1,21 @@
+[package]
+name = "vpnctl"
+description = "Gerencia ciclo de vida da VPN nas Runners para CI/CD"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "vpnctl"
+path = "src/main.rs"
+
+[dependencies]
+toolcore = { path = "../toolcore" }
+anyhow.workspace = true
+clap.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+fastrand.workspace = true

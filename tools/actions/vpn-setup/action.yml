@@ -1,0 +1,212 @@
+name: 'VPN Setup'
+description: 'Estabelece túnel VPN com healthcheck real e exporta estado'
+author: 'vcyber-tech'
+
+branding:
+  icon: 'shield'
+  color: 'purple'
+
+inputs:
+  provider:
+    description: 'Provedor de VPN'
+    required: false
+    default: 'openvpn'
+
+  config:
+    description: |
+      Conteúdo COMPLETO do arquivo .ovpn, com blocos <ca>, <cert>, <key>
+      e <tls-auth> inline. Passe via secrets.
+    required: true
+
+  username:
+    description: 'Nome de usuário (opcional — omitir quando usar apenas certificado)'
+    required: false
+
+  password:
+    description: 'Senha (opcional — omitir quando usar apenas certificado)'
+    required: false
+
+  healthcheck-host:
+    description: 'Host interno para validar conectividade pós-túnel'
+    required: false
+
+  healthcheck-port:
+    description: 'Porta do healthcheck'
+    required: false
+    default: '443'
+
+  timeout-secs:
+    description: 'Timeout total, em segundos, para considerar a conexão bem-sucedida'
+    required: false
+    default: '60'
+
+  interface:
+    description: 'Nome esperado da interface do túnel (auto-detectado se omitido)'
+    required: false
+
+  version:
+    description: |
+      Versão do vpnctl a baixar (ex: vpn-setup/v1.2.0). Em branco usa o
+      mesmo ref da action — funciona para tags flutuantes como vpn-setup/v1.
+    required: false
+    default: ''
+
+  dry-run:
+    description: 'Executa validação sem subir o túnel (útil para testar em PRs)'
+    required: false
+    default: 'false'
+
+outputs:
+  tunnel-ip:
+    description: 'IPv4 atribuído à interface do túnel'
+    value: ${{ steps.connect.outputs.tunnel-ip }}
+
+  interface:
+    description: 'Nome da interface do túnel'
+    value: ${{ steps.connect.outputs.interface }}
+
+runs:
+  using: 'composite'
+  steps:
+    # ----------- 1. Detectar plataforma -----------
+    - name: Detectar target de build
+      id: target
+      shell: bash
+      run: |
+        set -euo pipefail
+        case "${{ runner.os }}-${{ runner.arch }}" in
+          Linux-X64)   TARGET="x86_64-unknown-linux-musl" ;;
+          Linux-ARM64) TARGET="aarch64-unknown-linux-musl" ;;
+          *)
+            echo "::error::vpn-setup não suporta ${{ runner.os }}-${{ runner.arch }}"
+            exit 1
+            ;;
+        esac
+        echo "target=$TARGET" >> "$GITHUB_OUTPUT"
+
+    # ----------- 2. Resolver versão -----------
+    - name: Resolver versão do vpnctl
+      id: version
+      shell: bash
+      env:
+        INPUT_VERSION: ${{ inputs.version }}
+        ACTION_REF: ${{ github.action_ref }}
+      run: |
+        set -euo pipefail
+        if [ -n "$INPUT_VERSION" ]; then
+          VERSION="$INPUT_VERSION"
+        else
+          VERSION="$ACTION_REF"
+        fi
+        echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+        echo "::notice::vpnctl versão $VERSION"
+
+    # ----------- 3. Baixar vpnctl -----------
+    - name: Baixar vpnctl
+      id: download
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.action_repository }}
+        VERSION: ${{ steps.version.outputs.version }}
+        TARGET: ${{ steps.target.outputs.target }}
+        BIN_DIR: ${{ runner.temp }}/toolshed-${{ steps.version.outputs.version }}
+      run: |
+        set -euo pipefail
+
+        # Cache dentro do job: se outra action já baixou esta versão,
+        # reaproveita o binário em vez de baixar de novo.
+        if [ -x "$BIN_DIR/vpnctl" ]; then
+          echo "::notice::vpnctl já em cache do job"
+          echo "$BIN_DIR" >> "$GITHUB_PATH"
+          exit 0
+        fi
+
+        mkdir -p "$BIN_DIR"
+        ASSET="vpnctl-${TARGET}.tar.gz"
+
+        if command -v gh >/dev/null 2>&1; then
+          gh release download "$VERSION" \
+            --repo "$REPO" \
+            --pattern "$ASSET" \
+            --pattern "$ASSET.sha256" \
+            --dir "$BIN_DIR" \
+            --clobber
+        else
+          BASE="https://github.com/${REPO}/releases/download/${VERSION}"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "${BASE}/${ASSET}" -o "${BIN_DIR}/${ASSET}"
+          curl -fsSL -H "Authorization: Bearer ${GH_TOKEN}" \
+            "${BASE}/${ASSET}.sha256" -o "${BIN_DIR}/${ASSET}.sha256"
+        fi
+
+        # Verificação de integridade antes de executar qualquer coisa
+        ( cd "$BIN_DIR" && sha256sum -c "${ASSET}.sha256" )
+        tar -xzf "${BIN_DIR}/${ASSET}" -C "$BIN_DIR"
+        chmod +x "${BIN_DIR}/vpnctl"
+        echo "$BIN_DIR" >> "$GITHUB_PATH"
+
+    # ----------- 4. Garantir OpenVPN instalado -----------
+    - name: Garantir OpenVPN instalado
+      shell: bash
+      run: |
+        set -euo pipefail
+        if command -v openvpn >/dev/null 2>&1; then
+          echo "::notice::openvpn já instalado: $(openvpn --version | head -1)"
+          exit 0
+        fi
+        echo "::group::instalando openvpn"
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq openvpn
+        echo "::endgroup::"
+
+    # ----------- 5. Escrever config inline em local seguro -----------
+    - name: Escrever configuração VPN
+      id: write-config
+      shell: bash
+      env:
+        VPN_CONFIG_CONTENT: ${{ inputs.config }}
+      run: |
+        set -euo pipefail
+        DIR="${RUNNER_TEMP}/vpnctl-vitorinoea"
+        mkdir -p "$DIR"
+        chmod 700 "$DIR"
+
+        CFG="$DIR/config.ovpn"
+        printf '%s\n' "$VPN_CONFIG_CONTENT" > "$CFG"
+        chmod 600 "$CFG"
+
+        echo "config-path=$CFG" >> "$GITHUB_OUTPUT"
+
+    # ----------- 6. Conectar (sudo obrigatório) -----------
+    - name: Conectar VPN
+      id: connect
+      shell: bash
+      env:
+        # Estas variáveis precisam sobreviver ao sudo. Sem `--preserve-env`
+        # explícito, o sudo as apaga e o vpnctl não enxerga credenciais,
+        # destino dos outputs ou diretório de trabalho.
+        VPN_USERNAME: ${{ inputs.username }}
+        VPN_PASSWORD: ${{ inputs.password }}
+      run: |
+        set -euo pipefail
+
+        # `sudo` reseta o PATH; resolvemos o caminho absoluto do binário
+        # antes de invocá-lo com privilégio elevado.
+        VPNCTL_BIN="$(command -v vpnctl)"
+
+        ARGS=(
+          conectar
+          --provider "${{ inputs.provider }}"
+          --config "${{ steps.write-config.outputs.config-path }}"
+          --timeout-secs "${{ inputs.timeout-secs }}"
+          --healthcheck-port "${{ inputs.healthcheck-port }}"
+        )
+        [ -n "${{ inputs.healthcheck-host }}" ] && ARGS+=(--healthcheck-host "${{ inputs.healthcheck-host }}")
+        [ -n "${{ inputs.interface }}" ]        && ARGS+=(--interface "${{ inputs.interface }}")
+        [ "${{ inputs.dry-run }}" = "true" ]   && ARGS+=(--dry-run)
+
+        echo "::group::vpnctl conectar"
+        sudo --preserve-env=VPN_USERNAME,VPN_PASSWORD,RUNNER_TEMP,GITHUB_ACTIONS,GITHUB_OUTPUT \
+             "$VPNCTL_BIN" "${ARGS[@]}"
+        echo "::endgroup::"

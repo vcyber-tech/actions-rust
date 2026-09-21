@@ -1,0 +1,69 @@
+Coleção de ferramentas Rust e GitHub Actions para pipelines de CI/CD.
+
+Cada ferramenta é um binário estático (musl) empacotado como GitHub Action
+composite, seguro para uso em runners Linux x64.
+
+## Ações disponíveis
+
+| Ação | Descrição | Status |
+|---|---|---|
+| [`vpn-setup`](./tools/actions/vpn-setup) | Estabelece túnel VPN com healthcheck TCP real | ✅ estável |
+| [`vpn-teardown`](./tools/actions/vpn-teardown) | Encerra túnel VPN e limpa arquivos de trabalho | ✅ estável |
+
+## Uso rápido / Como chamar nos pipelines
+
+```yaml
+steps:
+  - name: Checagem Repositório
+    uses: actions/checkout@v7
+
+  - name: VPN Setup
+    id: vpn
+    uses: vcyber-tech/actions-rust/tools/actions/vpn-setup@vpn-setup/v1
+    with:
+      config: ${{ secrets.VPN_CONFIG_INLINE }}
+      healthcheck-host: internal.dns.example
+      healthcheck-port: '53'
+
+  - name: Deploy
+    run: |
+      echo "Túnel em ${{ steps.vpn.outputs.interface }} (${{ steps.vpn.outputs.tunnel-ip }})"
+
+  - name: VPN Teardown
+    if: always()
+    uses: vcyber-tech/actions-rust/tools/actions/vpn-teardown@vpn-teardown/v1
+```
+
+## Estrutura do repositório
+
+```yaml
+tools/                         # workspace Rust
+├── crates/
+│   ├── toolcore/              # biblioteca compartilhada (utilitários do GH Actions)
+│   └── vpnctl/                # binário da VPN
+└── actions/
+    ├── vpn-setup/             # composite action (chama vpnctl conectar)
+    └── vpn-teardown/          # composite action (chama vpnctl desconectar)
+```
+
+## Desenvolvimento
+
+Requisitos: Rust 1.85+ (edição 2024), alvo x86_64-unknown-linux-musl instalado.
+
+```yaml
+cd tools
+cargo build --workspace
+cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+cargo fmt --check
+```
+
+## Publicação de releases
+
+Cada ação é versionada independentemente com tags no formato
+<nome-da-ação>/vX.Y.Z. A tag flutuante <nome-da-ação>/v1 aponta para
+a release estável mais recente
+
+## Licença
+
+MIT

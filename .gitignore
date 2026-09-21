@@ -1,0 +1,34 @@
+# ─── Rust ───
+# O diretório de build é grande, gerado e não deve ser versionado.
+target/
+**/*.rs.bk
+*.pdb
+
+# ─── Arquivos de configuração sensíveis ───
+# Nunca versionar configs de VPN, chaves, tokens nem .env.
+*.ovpn
+*.conf
+!tools/**/*.conf
+*.crt
+*.key
+*.pem
+ta.key
+.env
+.env.*
+!.env.example
+
+# ─── IDE e editores ───
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── Sistema operacional ───
+.DS_Store
+Thumbs.db
+
+# ─── Logs e temporários ───
+*.log
+*.tmp
+tmp/
