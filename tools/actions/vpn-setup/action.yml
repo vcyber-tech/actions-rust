@@ -89,6 +89,8 @@ runs:
       id: version
       shell: bash
       env:
+        GH_TOKEN: ${{ github.token }}
+        REPO: ${{ github.action_repository }}
         INPUT_VERSION: ${{ inputs.version }}
         ACTION_REF: ${{ github.action_ref }}
       run: |
@@ -97,6 +99,17 @@ runs:
           VERSION="$INPUT_VERSION"
         else
           VERSION="$ACTION_REF"
+        if [[ "$VERSION" =~ ^([a-z0-9-]+)/v([0-9]+)$ ]]; then
+          ACTION="${BASH_REMATCH[1]}"
+          MAJOR="${BASH_REMATCH[2]}"
+          RESOLVED=$(gh release list --repo "$REPO" --limit 100 --json tagName --jq "[.[] | select(.tagName | startswith(\"${ACTION}/${MAJOR}.\"))] | .[0].tagName // \"\"")
+          if [ -z "$RESOLVED" ]; then
+            echo "::error::nenhuma release encontrada para ${ACTION}/v${MAJOR}.*"
+            exit 1
+          fi
+          echo "::notice::versão flutuante $VERSION resolvida para $RESOLVED"
+          VERSION="$RESOLVED"
+        fi
         fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
         echo "::notice::vpnctl versão $VERSION"
@@ -110,7 +123,7 @@ runs:
         REPO: ${{ github.action_repository }}
         VERSION: ${{ steps.version.outputs.version }}
         TARGET: ${{ steps.target.outputs.target }}
-        BIN_DIR: ${{ runner.temp }}/toolshed-${{ steps.version.outputs.version }}
+        BIN_DIR: ${{ runner.temp }}/toolshed-vpnctl
       run: |
         set -euo pipefail
 
