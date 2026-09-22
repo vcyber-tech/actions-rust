@@ -1,3 +1,7 @@
+# actions-rust
+
+[![CI](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 Coleção de ferramentas Rust e GitHub Actions para pipelines de CI/CD.
 
 Cada ferramenta é um binário estático (musl) empacotado como GitHub Action
