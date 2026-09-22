@@ -45,10 +45,13 @@ runs:
         ACTION_REF: ${{ github.action_ref }}
       run: |
         set -euo pipefail
+
         if [ -n "$INPUT_VERSION" ]; then
           VERSION="$INPUT_VERSION"
         else
           VERSION="$ACTION_REF"
+        fi
+
         if [[ "$VERSION" =~ ^([a-z0-9-]+)/v([0-9]+)$ ]]; then
           ACTION="${BASH_REMATCH[1]}"
           MAJOR="${BASH_REMATCH[2]}"
@@ -61,8 +64,8 @@ runs:
           echo "::notice::versão flutuante $VERSION resolvida para $RESOLVED"
           VERSION="$RESOLVED"
         fi
+
         echo "skip=false" >> "$GITHUB_OUTPUT"
-        fi
         echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
     # ----------- 3. Baixar vpnctl (reaproveita cache do vpn-setup) -----------
