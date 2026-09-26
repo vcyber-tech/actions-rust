@@ -6,6 +6,10 @@
 # release, que baixa o artefato `vpnctl` do job `build`.
 FROM alpine:3.24.2
 
+# Metadados OCI — lidos por ferramentas de supply chain (Renovate,
+# scanners) para ligar a imagem ao repositório-fonte.
+LABEL org.opencontainers.image.source="https://github.com/vcyber-tech/actions-rust"
+
 # Dependências de runtime:
 #   openvpn        — estabelece o túnel
 #   iproute2       — fornece `ip`, usado para descobrir interface e IP
@@ -24,5 +28,10 @@ COPY vpnctl /usr/local/bin/vpnctl
 # O openvpn precisa de CAP_NET_ADMIN para criar a interface tun. O
 # container deve ser executado com:
 #   docker run --network=host --cap-add=NET_ADMIN ...
+#
+# Nota: o scanner do Docker Hub pode reportar CVE-2026-11604 para o pacote
+# `openvpn` do Alpine. Esse CVE afeta especificamente o driver `ovpn-dco-win`
+# (Windows). O componente não existe na plataforma Linux, portanto a imagem
+# não é afetada. Ver: https://security.alpinelinux.org/vuln/CVE-2026-11604
 ENTRYPOINT ["/usr/local/bin/vpnctl"]
 CMD ["--help"]
