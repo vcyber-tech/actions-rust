@@ -1,7 +1,9 @@
 # actions-rust
 
-[![CI](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml/badge.svg)](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![CI](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml/badge.svg?style=flat-square)](https://github.com/vcyber-tech/actions-rust/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](https://opensource.org/licenses/MIT)
+[![Docker Version](https://img.shields.io/docker/v/vcybertech/vpnctl/latest?logo=docker&label=version&style=flat-square)](https://hub.docker.com/r/vcybertech/vpnctl)
+
 Coleção de ferramentas Rust e GitHub Actions para pipelines de CI/CD.
 
 Cada ferramenta é um binário estático (musl) empacotado como GitHub Action
