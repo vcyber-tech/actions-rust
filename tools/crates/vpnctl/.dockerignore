@@ -1,0 +1,4 @@
+# Ignora tudo por padrão — só o binário e o Dockerfile entram no contexto
+**/*
+!Dockerfile
+!vpnctl
