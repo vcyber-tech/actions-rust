@@ -50,6 +50,57 @@ tools/                         # workspace Rust
     └── vpn-teardown/          # composite action (chama vpnctl desconectar)
 ```
 
+## Docker
+
+O `vpnctl` também é publicado como imagem Docker no Docker Hub, para uso em
+qualquer CI (GitLab CI, Jenkins, CircleCI) ou localmente.
+
+### Pull
+
+```yaml
+docker pull docker.io/vcybertech/vpnctl:1
+```
+
+### Uso
+
+A imagem precisa de rede do host e permissão para criar a interface `tun`:
+
+```yaml
+docker run --rm \
+    --network=host \
+    --cap-add=NET_ADMIN \
+    -e RUNNER_TEMP=/work \
+    -v /caminho/config.ovpn:/input/config.ovpn:ro \
+    -v /tmp/vpn-work:/work \
+    docker.io/vcybertech/vpnctl:1 \
+    conectar --config /input/config.ovpn \
+             --healthcheck-host internal.dns.example --healthcheck-port 53
+```
+
+**Flags obrigatórias:**
+
+- `--network=host` — sem isso, o túnel fica isolado dentro do container e o host não vê a interface `tun`
+- `--cap-add=NET_ADMIN` — sem isso, o `openvpn` não consegue criar a interface
+- `-e RUNNER_TEMP=/work` + `-v /tmp/vpn-work:/work` — para que o `desconectar` encontre o PID file
+
+### Tags disponíveis
+
+| Tag | Significado |
+|---|---|
+| `1.0.1` | versão exata |
+| `1` | última versão estável da major 1 |
+| `latest` | última versão estável |
+
+### Encerrar o túnel
+
+```bash
+docker run --rm --network=host --cap-add=NET_ADMIN \
+    -e RUNNER_TEMP=/work \
+    -v /tmp/vpn-work:/work \
+    docker.io/vcybertech/vpnctl:1 \
+    desconectar
+```
+
 ## Desenvolvimento
 
 Requisitos: Rust 1.85+ (edição 2024), alvo x86_64-unknown-linux-musl instalado.
